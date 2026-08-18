@@ -1,0 +1,22 @@
+# Build
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+
+# Configurações locais e segredos
+application-local.properties
+.env
+*.env
+
+# Logs e temporários
+*.log
+
+### Segredos e configurações locais ###
+application-local.properties
+.env
+*.env
