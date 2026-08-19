@@ -57,4 +57,26 @@ public class EmbeddingService {
     public record RespostaEmbedding(List<Dado> data) {
         public record Dado(List<Double> embedding) {}
     }
+
+
+
+    public double similaridadeCosseno(List<Double>a,List<Double>b){
+        if(a.size() != b.size() || a.isEmpty()){
+            return 0.0;
+        }
+        double produtoEscalar=0.0;
+        double normaA=0.0;
+        double normaB=0.0;
+
+        for(int i=0;i<a.size(); i++){
+            produtoEscalar+=a.get(i)*b.get(i);
+            normaA +=a.get(i)*a.get(i);
+            normaB +=b.get(i)*b.get(i);
+        }
+
+        if(normaA==0|| normaB==0){
+            return 0.0;
+        }
+        return produtoEscalar/(Math.sqrt(normaA)*Math.sqrt(normaB));
+    }
 }
