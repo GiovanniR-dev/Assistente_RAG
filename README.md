@@ -2,7 +2,7 @@
 
 Aplicação backend que permite conversar com seus próprios documentos em linguagem natural, usando **RAG (Retrieval-Augmented Generation)**: o sistema recupera os trechos mais relevantes do documento e os envia como contexto para um modelo de linguagem gerar a resposta.
 
-> **Status:** ciclo RAG completo funcionando via API. Frontend em desenvolvimento.
+> **Status:** ciclo RAG completo com histórico de conversas. Autenticação e frontend em desenvolvimento.
 
 ---
 
@@ -47,9 +47,11 @@ Embedding da pergunta
    ↓
 Similaridade de cosseno contra todos os trechos armazenados
    ↓
-Os 3 trechos mais relevantes viram o contexto do prompt
+Os 3 trechos mais relevantes + as últimas 10 mensagens da conversa
    ↓
-LLM gera a resposta ancorada nesses trechos
+LLM gera a resposta ancorada nesse contexto
+   ↓
+Pergunta e resposta são persistidas na conversa
 ```
 
 ---
@@ -111,7 +113,21 @@ O corte também procura o fim de frase mais próximo (`. `) dentro da metade fin
 
 A instrução enviada como mensagem `system` delimita explicitamente o que o modelo pode usar: apenas os trechos fornecidos, sem recorrer ao conhecimento de treino, e declarando quando a informação não está no documento.
 
-Sem essa delimitação, o modelo mistura o conteúdo do documento com o que já sabe — e o usuário perde a capacidade de distinguir o que veio do próprio arquivo. Em um assistente de documentos, essa distinção é o produto.
+Esse comportamento foi validado empiricamente com perguntas cujo assunto não existe no documento. Em um dos testes, a recuperação trouxe trechos irrelevantes e o modelo respondeu que a informação não constava no material — em vez de completar a lacuna com conhecimento próprio. Em um assistente de documentos, essa recusa é a funcionalidade: o valor do sistema depende de o usuário poder confiar que a resposta veio do arquivo dele.
+
+### Janela deslizante de histórico
+
+Conversas mantêm contexto enviando as mensagens anteriores junto com a pergunta atual. Como cada mensagem antiga é recobrada como tokens a cada nova requisição, o histórico é limitado às últimas 10 mensagens.
+
+Alternativas mais sofisticadas existem — resumir mensagens antigas em vez de descartá-las, por exemplo — mas a janela fixa resolve o caso comum com custo previsível e sem introduzir mais uma chamada de modelo no caminho crítico.
+
+### Limitação conhecida: a recuperação não considera o histórico
+
+A busca semântica gera o embedding apenas da pergunta atual, isolada da conversa. Perguntas de continuidade que carregam assunto próprio funcionam bem — *"e o preço?"* recupera corretamente os trechos sobre custo, porque "preço" tem significado próprio no espaço vetorial.
+
+O problema aparece em perguntas que são pura referência, sem conteúdo semântico: *"explique melhor"* não aponta para nenhuma região do documento, e a recuperação retorna trechos arbitrários. Nesses casos o histórico salva a resposta, mas o modelo trabalha com o contexto errado em mãos.
+
+A solução conhecida é **query rewriting**: usar a LLM para reescrever a pergunta de forma autônoma antes de buscar, transformando *"explique melhor"* em algo como *"explique melhor o preço de GPUs dedicadas"*. O custo é uma chamada adicional de modelo por pergunta. A implementação está no roadmap.
 
 ### Por que `ddl-auto=validate` em vez de `update`?
 
@@ -131,12 +147,37 @@ Senha do banco e chave de API são lidas exclusivamente de variáveis de ambient
 
 ## API
 
+### Documentos
+
 | Método | Rota | Descrição |
 |---|---|---|
 | `POST` | `/api/documentos/upload` | Envia um PDF (form-data, campo `arquivo`) |
 | `GET` | `/api/documentos` | Lista os documentos processados |
+
+### Busca
+
+| Método | Rota | Descrição |
+|---|---|---|
 | `GET` | `/api/busca?pergunta=...&quantidade=3` | Retorna os trechos mais relevantes com seus scores |
-| `POST` | `/api/perguntar` | Recebe `{"pergunta":"..."}` e devolve a resposta gerada |
+
+### Conversas
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/conversas` | Cria uma nova conversa |
+| `GET` | `/api/conversas` | Lista as conversas do usuário |
+| `POST` | `/api/conversas/{id}/mensagens` | Envia uma pergunta e recebe a resposta |
+| `GET` | `/api/conversas/{id}/mensagens` | Retorna o histórico da conversa |
+
+### Pergunta avulsa
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/perguntar` | Pergunta sem histórico, útil para testes |
+
+---
+
+## Exemplos
 
 **Upload:**
 
@@ -144,7 +185,7 @@ Senha do banco e chave de API são lidas exclusivamente de variáveis de ambient
 curl -X POST -F "arquivo=@documento.pdf" http://localhost:8080/api/documentos/upload
 ```
 
-**Busca (inspeção dos trechos recuperados):**
+**Inspecionar a recuperação:**
 
 ```bash
 curl -G "http://localhost:8080/api/busca" --data-urlencode "pergunta=quanto de energia a placa gasta"
@@ -152,17 +193,21 @@ curl -G "http://localhost:8080/api/busca" --data-urlencode "pergunta=quanto de e
 
 O endpoint de busca expõe o score de similaridade de cada trecho, o que permite auditar *por que* uma resposta foi gerada — útil para diagnosticar quando o resultado não é o esperado.
 
-**Pergunta:**
+**Conversa com continuidade:**
 
 ```bash
-curl -X POST http://localhost:8080/api/perguntar \
+curl -X POST http://localhost:8080/api/conversas
+
+curl -X POST http://localhost:8080/api/conversas/1/mensagens \
   -H "Content-Type: application/json" \
-  -d '{"pergunta":"qual a diferenca entre GPU integrada e dedicada?"}'
+  -d '{"pergunta":"o que e uma GPU dedicada?"}'
+
+curl -X POST http://localhost:8080/api/conversas/1/mensagens \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta":"e ela consome mais energia?"}'
 ```
 
-```json
-{ "resposta": "..." }
-```
+A segunda pergunta não menciona o assunto: a resolução de *"ela"* vem do histórico enviado junto ao modelo.
 
 ---
 
@@ -214,8 +259,9 @@ A aplicação sobe em `http://localhost:8080`.
 - [x] Endpoint de upload
 - [x] Busca por similaridade de cosseno
 - [x] Geração de resposta ancorada no contexto
-- [ ] Persistência do histórico de conversas
+- [x] Histórico de conversas com janela deslizante
 - [ ] Autenticação
+- [ ] Query rewriting para perguntas de continuidade
 - [ ] Frontend em React
 - [ ] Deploy
 
