@@ -35,4 +35,19 @@ public class AuthController {
 
     public record UsuarioDto(Long id, String nome, String email){}
 
+
+
+    @PostMapping("/login")
+    public TokenDto login(@Valid @RequestBody LoginDto corpo) {
+        String token = authService.login(corpo.email(), corpo.senha());
+        return new TokenDto(token);
+    }
+
+    public record LoginDto(
+            @NotBlank @Email String email,
+            @NotBlank String senha
+    ) {}
+
+    public record TokenDto(String token) {}
+
 }

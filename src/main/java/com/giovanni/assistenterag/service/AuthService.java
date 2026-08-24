@@ -13,6 +13,7 @@ public class AuthService {
 
     private final UsuarioRepository usuarioRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
     public Usuario registrar(String nome, String email, String senha){
         if (usuarioRepository.findByEmail(email).isPresent()){
@@ -24,5 +25,16 @@ public class AuthService {
         usuario.setSenhaHash(passwordEncoder.encode(senha));
 
         return usuarioRepository.save(usuario);
+    }
+
+    public String login(String email, String senha) {
+        Usuario usuario = usuarioRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Email ou senha invalidos."));
+
+        if (!passwordEncoder.matches(senha, usuario.getSenhaHash())) {
+            throw new IllegalArgumentException("Email ou senha invalidos.");
+        }
+
+        return jwtService.gerarToken(usuario.getId(), usuario.getEmail());
     }
 }
