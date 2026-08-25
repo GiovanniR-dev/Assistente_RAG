@@ -1,8 +1,8 @@
 package com.giovanni.assistenterag.controller;
 
+import com.giovanni.assistenterag.config.UsuarioAtual;
 import com.giovanni.assistenterag.model.Documento;
 import com.giovanni.assistenterag.model.Usuario;
-import com.giovanni.assistenterag.repository.UsuarioRepository;
 import com.giovanni.assistenterag.service.DocumentoService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,7 +19,7 @@ import java.util.List;
 public class DocumentoController {
 
     private final DocumentoService documentoService;
-    private final UsuarioRepository usuarioRepository;
+    private final UsuarioAtual usuarioAtual;
 
     @PostMapping("/upload")
     public ResponseEntity<RespostaUpload> upload(@RequestParam("arquivo") MultipartFile arquivo)
@@ -29,10 +29,7 @@ public class DocumentoController {
             return ResponseEntity.badRequest().build();
         }
 
-        // Temporário: usa o primeiro usuário do banco até termos autenticação
-        Usuario usuario = usuarioRepository.findAll().stream()
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("Nenhum usuário cadastrado no banco."));
+        Usuario usuario = usuarioAtual.get();
 
         Documento documento = documentoService.processarUpload(arquivo, usuario);
 
@@ -45,7 +42,7 @@ public class DocumentoController {
 
     @GetMapping
     public List<RespostaUpload> listar() {
-        return documentoService.listarTodos().stream()
+        return documentoService.listarPorUsuario(usuarioAtual.get().getId()).stream()
                 .map(doc -> new RespostaUpload(doc.getId(), doc.getNomeArquivo()))
                 .toList();
     }

@@ -27,6 +27,8 @@ public class JwtService {
 
         this.chave=Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expiracaoHoras=expiracaoHoras;
+
+
     }
 
     public String gerarToken(Long usuarioId, String email){

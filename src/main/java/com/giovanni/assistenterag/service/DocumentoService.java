@@ -51,10 +51,9 @@ public class DocumentoService {
         return documento;
     }
 
-    public List<Documento> listarTodos() {
-        return documentoRepository.findAll();
+    public List<Documento> listarPorUsuario(Long usuarioId) {
+        return documentoRepository.findByUsuarioId(usuarioId);
     }
-
     private String extrairTexto(MultipartFile arquivo) throws IOException {
         try (PDDocument pdf = Loader.loadPDF(arquivo.getBytes())) {
             PDFTextStripper stripper = new PDFTextStripper();

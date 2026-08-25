@@ -2,7 +2,7 @@
 
 Aplicação backend que permite conversar com seus próprios documentos em linguagem natural, usando **RAG (Retrieval-Augmented Generation)**: o sistema recupera os trechos mais relevantes do documento e os envia como contexto para um modelo de linguagem gerar a resposta.
 
-> **Status:** ciclo RAG completo com histórico de conversas. Autenticação e frontend em desenvolvimento.
+> **Status:** backend completo — RAG, histórico de conversas e autenticação. Frontend em desenvolvimento.
 
 ---
 
@@ -12,6 +12,7 @@ Aplicação backend que permite conversar com seus próprios documentos em lingu
 |---|---|
 | Linguagem | Java 21 |
 | Framework | Spring Boot 4.1 |
+| Segurança | Spring Security + JWT (JJWT) |
 | Persistência | Spring Data JPA + Hibernate |
 | Banco de dados | MySQL 8 |
 | Extração de texto | Apache PDFBox 3 |
@@ -65,7 +66,7 @@ usuarios ──┬──< documentos ──< trechos
 
 | Tabela | Responsabilidade |
 |---|---|
-| `usuarios` | Identidade do dono dos dados |
+| `usuarios` | Identidade, e-mail único e hash da senha |
 | `documentos` | Metadados dos arquivos enviados |
 | `trechos` | Pedaços do texto + embedding (vetor) de cada um |
 | `conversas` | Sessões de chat |
@@ -78,6 +79,8 @@ O schema completo está em [`schema.sql`](./schema.sql).
 ## Arquitetura em camadas
 
 ```
+Filtro JWT  →  autentica a requisição e popula o contexto de seguranca
+    ↓
 Controller  →  recebe HTTP, converte para DTO, devolve status
     ↓
 Service     →  regra de negócio (extração, chunking, embeddings, busca, geração)
@@ -121,6 +124,22 @@ Conversas mantêm contexto enviando as mensagens anteriores junto com a pergunta
 
 Alternativas mais sofisticadas existem — resumir mensagens antigas em vez de descartá-las, por exemplo — mas a janela fixa resolve o caso comum com custo previsível e sem introduzir mais uma chamada de modelo no caminho crítico.
 
+### Autenticação stateless com JWT
+
+O login devolve um token assinado que carrega o id do usuário e expira em 24 horas. O servidor não mantém sessão: cada requisição se identifica sozinha pelo header `Authorization`, o que elimina estado compartilhado e simplifica o deploy horizontal.
+
+Senhas são persistidas apenas como hash BCrypt, que gera um sal aleatório por senha — dois usuários com a mesma senha produzem hashes diferentes, inviabilizando ataques por tabela pré-computada.
+
+Trocar a chave de assinatura invalida todos os tokens emitidos de uma vez, o que serve como mecanismo de revogação em massa caso a chave seja comprometida.
+
+### Respostas que não revelam a existência de recursos
+
+Duas decisões seguem o mesmo princípio: não confirmar ao atacante aquilo que ele está tentando descobrir.
+
+No login, e-mail inexistente e senha incorreta retornam a mesma mensagem — caso contrário, seria possível enumerar quais e-mails estão cadastrados.
+
+No acesso a conversas, uma conversa que pertence a outro usuário responde `404`, como se não existisse, em vez de `403`. Um `403` confirmaria que aquele id está em uso, permitindo mapear o volume de dados do sistema. Essa verificação de propriedade fecha uma classe de falha conhecida como IDOR (*Insecure Direct Object Reference*).
+
 ### Limitação conhecida: a recuperação não considera o histórico
 
 A busca semântica gera o embedding apenas da pergunta atual, isolada da conversa. Perguntas de continuidade que carregam assunto próprio funcionam bem — *"e o preço?"* recupera corretamente os trechos sobre custo, porque "preço" tem significado próprio no espaço vetorial.
@@ -135,24 +154,43 @@ O schema é versionado manualmente em `schema.sql` e o Hibernate atua apenas com
 
 Com `validate`, qualquer divergência entre entidade e tabela derruba a aplicação no startup, em vez de gerar erro silencioso em produção. Na prática, foi isso que expôs um erro de mapeamento logo no começo: as tabelas usavam `INT` nas chaves primárias enquanto as entidades JPA declaravam `Long`, que o Hibernate mapeia para `BIGINT`. A validação falhou na subida e o schema foi migrado para `BIGINT`.
 
+### `open-in-view` desabilitado
+
+O padrão do Spring mantém a sessão do Hibernate aberta durante toda a requisição, permitindo que relações `LAZY` sejam carregadas em qualquer ponto — inclusive na serialização da resposta. Isso esconde consultas em lugares inesperados e prolonga a posse de conexões do pool.
+
+Com `spring.jpa.open-in-view=false`, o acesso a dados não carregados fora da camada de serviço falha explicitamente, tornando visível o que antes era silencioso.
+
 ### Por que injeção de dependência via construtor?
 
 Todas as services usam campos `final` com `@RequiredArgsConstructor` do Lombok. Isso torna as dependências obrigatórias e imutáveis, e permite instanciar a classe em testes sem subir o contexto do Spring — algo que a injeção por campo (`@Autowired` direto no atributo) dificulta.
 
 ### Nenhuma credencial no repositório
 
-Senha do banco e chave de API são lidas exclusivamente de variáveis de ambiente. O `application.properties` versionado contém apenas as referências (`${DB_PASSWORD}`, `${OPENAI_API_KEY}`), nunca os valores.
+Senha do banco, chave de API e segredo de assinatura JWT são lidos exclusivamente de variáveis de ambiente. O `application.properties` versionado contém apenas as referências (`${DB_PASSWORD}`, `${OPENAI_API_KEY}`, `${JWT_SECRET}`), nunca os valores.
 
 ---
 
 ## API
+
+Todas as rotas exigem autenticação, exceto `/api/auth/**`. O token vai no header:
+
+```
+Authorization: Bearer <token>
+```
+
+### Autenticação
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/auth/registrar` | Cria uma conta (`nome`, `email`, `senha`) |
+| `POST` | `/api/auth/login` | Devolve o token JWT |
 
 ### Documentos
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `POST` | `/api/documentos/upload` | Envia um PDF (form-data, campo `arquivo`) |
-| `GET` | `/api/documentos` | Lista os documentos processados |
+| `GET` | `/api/documentos` | Lista os documentos do usuário autenticado |
 
 ### Busca
 
@@ -169,26 +207,37 @@ Senha do banco e chave de API são lidas exclusivamente de variáveis de ambient
 | `POST` | `/api/conversas/{id}/mensagens` | Envia uma pergunta e recebe a resposta |
 | `GET` | `/api/conversas/{id}/mensagens` | Retorna o histórico da conversa |
 
-### Pergunta avulsa
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `POST` | `/api/perguntar` | Pergunta sem histórico, útil para testes |
-
 ---
 
 ## Exemplos
 
+**Registro e login:**
+
+```bash
+curl -X POST http://localhost:8080/api/auth/registrar \
+  -H "Content-Type: application/json" \
+  -d '{"nome":"Fulano","email":"fulano@exemplo.com","senha":"senha12345"}'
+
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"fulano@exemplo.com","senha":"senha12345"}' \
+  | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+```
+
 **Upload:**
 
 ```bash
-curl -X POST -F "arquivo=@documento.pdf" http://localhost:8080/api/documentos/upload
+curl -X POST http://localhost:8080/api/documentos/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "arquivo=@documento.pdf"
 ```
 
 **Inspecionar a recuperação:**
 
 ```bash
-curl -G "http://localhost:8080/api/busca" --data-urlencode "pergunta=quanto de energia a placa gasta"
+curl -G "http://localhost:8080/api/busca" \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "pergunta=quanto de energia a placa gasta"
 ```
 
 O endpoint de busca expõe o score de similaridade de cada trecho, o que permite auditar *por que* uma resposta foi gerada — útil para diagnosticar quando o resultado não é o esperado.
@@ -196,13 +245,16 @@ O endpoint de busca expõe o score de similaridade de cada trecho, o que permite
 **Conversa com continuidade:**
 
 ```bash
-curl -X POST http://localhost:8080/api/conversas
+curl -X POST http://localhost:8080/api/conversas \
+  -H "Authorization: Bearer $TOKEN"
 
 curl -X POST http://localhost:8080/api/conversas/1/mensagens \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pergunta":"o que e uma GPU dedicada?"}'
 
 curl -X POST http://localhost:8080/api/conversas/1/mensagens \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pergunta":"e ela consome mais energia?"}'
 ```
@@ -236,6 +288,13 @@ A aplicação não guarda credenciais no código. Defina antes de rodar:
 | `DB_USER` | Usuário do MySQL | — |
 | `DB_PASSWORD` | Senha do MySQL | — |
 | `OPENAI_API_KEY` | Chave da API da OpenAI | — |
+| `JWT_SECRET` | Segredo de assinatura (mínimo 32 caracteres) | — |
+
+Para gerar o segredo JWT:
+
+```bash
+openssl rand -base64 48
+```
 
 O modelo de geração é definido em `application.properties`, na propriedade `openai.modelo.chat`.
 
@@ -260,8 +319,11 @@ A aplicação sobe em `http://localhost:8080`.
 - [x] Busca por similaridade de cosseno
 - [x] Geração de resposta ancorada no contexto
 - [x] Histórico de conversas com janela deslizante
-- [ ] Autenticação
+- [x] Registro e login com JWT
+- [x] Isolamento de dados por usuário
+- [x] Tratamento centralizado de erros
 - [ ] Query rewriting para perguntas de continuidade
+- [ ] Testes automatizados
 - [ ] Frontend em React
 - [ ] Deploy
 
