@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
 @Service
 public class RespostaService {
 
-    private static final int TRECHOS_DE_CONTEXTO = 3;
+    private static final int TRECHOS_DE_CONTEXTO = 8;
     private static final int MAXIMO_MENSAGENS_HISTORICO = 10;
 
     private final RestClient restClient;
@@ -37,14 +37,12 @@ public class RespostaService {
     }
 
     /** Pergunta avulsa, sem histórico. */
-    public String responder(String pergunta) {
-        return gerar(pergunta, List.of());
-    }
 
     /** Pergunta dentro de uma conversa, com histórico e persistência. */
     public String responderEmConversa(String pergunta, Conversa conversa) {
+        Long usuarioiId=conversa.getUsuario().getId();
         List<Mensagem> historico = conversaService.listarMensagens(conversa.getId());
-        String resposta = gerar(pergunta, historico);
+        String resposta = gerar(pergunta, historico, usuarioiId);
 
         conversaService.definirTituloSeVazio(conversa, pergunta);
         conversaService.salvarMensagem(conversa, ConversaService.PAPEL_USUARIO, pergunta);
@@ -53,31 +51,38 @@ public class RespostaService {
         return resposta;
     }
 
-    private String gerar(String pergunta, List<Mensagem> historico) {
+    private String gerar(String pergunta, List<Mensagem> historico,long usuarioId) {
         List<BuscaService.TrechoRelevante> relevantes =
-                buscaService.buscartrechoRelevante(pergunta, TRECHOS_DE_CONTEXTO);
+                buscaService.buscarTrechosRelevantes(pergunta,TRECHOS_DE_CONTEXTO,usuarioId);
 
         if (relevantes.isEmpty()) {
             return "Nenhum documento foi carregado ainda.";
         }
 
         String contexto = relevantes.stream()
-                .map(r -> r.trecho().getConteudo())
+                .map(r -> "[Fonte: %s]\n%s".formatted(r.nomeDocumento(), r.trecho().getConteudo()))
                 .collect(Collectors.joining("\n\n---\n\n"));
 
         String instrucao = """
-                Você é um assistente que responde perguntas com base exclusivamente \
-                nos trechos de documento fornecidos abaixo.
+            Você é um assistente especializado em responder perguntas com base \
+            em documentos fornecidos pelo usuário.
 
-                Regras:
-                - Use apenas as informações dos trechos. Não invente nada.
-                - Se os trechos não contiverem a resposta, diga que a informação \
-                não está no documento.
-                - Responda em português, de forma direta.
+            Como trabalhar com os trechos abaixo:
+            - Combine informações de trechos diferentes quando a resposta exigir isso.
+            - Raciocine sobre os dados: comparar valores, calcular diferenças e tirar \
+            conclusões a partir do que está escrito é esperado e desejável.
+            - Se a informação aparecer em mais de uma fonte com valores divergentes, \
+            aponte a divergência e cite os documentos envolvidos.
+            - Não mencione os nomes dos arquivos na resposta.
+            - Só diga que a informação não consta nos documentos quando ela realmente \
+            não estiver presente nem puder ser derivada dos trechos.
+            - Não use conhecimento próprio para preencher lacunas dos documentos.
 
-                TRECHOS DO DOCUMENTO:
-                %s
-                """.formatted(contexto);
+            Responda em português, de forma direta e organizada.
+
+            TRECHOS DOS DOCUMENTOS:
+            %s
+            """.formatted(contexto);
 
         List<MensagemChat> mensagens = new ArrayList<>();
         mensagens.add(new MensagemChat("system", instrucao));
