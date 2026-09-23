@@ -5,6 +5,7 @@ import com.giovanni.assistenterag.model.Conversa;
 import com.giovanni.assistenterag.model.Usuario;
 import com.giovanni.assistenterag.service.ConversaService;
 import com.giovanni.assistenterag.service.RespostaService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,7 +38,7 @@ public class ConversaController {
     }
 
     @PostMapping("/{id}/mensagens")
-    public MensagemDto enviar(@PathVariable Long id, @RequestBody PerguntaDto corpo) {
+    public MensagemDto enviar(@PathVariable Long id,@Valid @RequestBody PerguntaDto corpo) {
         Conversa conversa = conversaDoUsuario(id);
         String resposta = respostaService.responderEmConversa(corpo.pergunta(), conversa);
         return new MensagemDto(ConversaService.PAPEL_ASSISTENTE, resposta);

@@ -35,9 +35,11 @@ public class JwtFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws ServletException, IOException{
 
         String cabecalho = request.getHeader("Authorization");
+        System.out.println(">>> Header: "+(cabecalho!=null?"presente":"AUSENCIA"));
 
         if (cabecalho != null && cabecalho.startsWith(PREFIXO)) {
-            String token=cabecalho.substring(PREFIXO.length());
+            String token = cabecalho.substring(PREFIXO.length());
+            System.out.println(">>> Token valido? " + jwtService.tokenValido(token));
 
             if (jwtService.tokenValido(token)) {
                 Long usuarioId = jwtService.extrairUsuarioId(token);
@@ -49,6 +51,7 @@ public class JwtFilter extends OncePerRequestFilter {
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
+
             }
         }
         filterChain.doFilter(request, response);

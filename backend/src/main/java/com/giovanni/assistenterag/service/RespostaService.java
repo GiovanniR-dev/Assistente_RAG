@@ -91,7 +91,7 @@ public class RespostaService {
 
         RespostaChat resposta = restClient.post()
                 .uri("/chat/completions")
-                .body(new RequisicaoChat(modelo, mensagens))
+                .body(new RequisicaoChat(modelo, mensagens,800))
                 .retrieve()
                 .body(RespostaChat.class);
 
@@ -113,7 +113,7 @@ public class RespostaService {
 
     public record MensagemChat(String role, String content) {}
 
-    public record RequisicaoChat(String model, List<MensagemChat> messages) {}
+    public record RequisicaoChat(String model, List<MensagemChat> messages, Integer max_completion_tokens) {}
 
     public record RespostaChat(List<Escolha> choices) {
         public record Escolha(MensagemChat message) {}

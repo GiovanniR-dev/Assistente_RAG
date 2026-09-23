@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 
 function Chat() {
@@ -106,12 +107,15 @@ function Chat() {
           {mensagens.map((m, i) => (
             <div
               key={i}
+              className={m.papel === 'usuario' ? '' : 'balao-md'}
               style={{
                 ...estilos.balao,
                 ...(m.papel === 'usuario' ? estilos.balaoUsuario : estilos.balaoAssistente),
               }}
             >
-              {m.conteudo}
+              {m.papel === 'usuario'
+                ? m.conteudo
+                : <ReactMarkdown>{m.conteudo}</ReactMarkdown>}
             </div>
           ))}
 
@@ -184,7 +188,6 @@ const estilos = {
     marginBottom: 12,
     fontSize: 14,
     lineHeight: 1.5,
-    whiteSpace: 'pre-wrap',
   },
   balaoUsuario: { background: '#18181b', color: '#fff', marginLeft: 'auto' },
   balaoAssistente: { background: '#f4f4f5', color: '#18181b' },

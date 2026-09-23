@@ -25,15 +25,45 @@ public class DocumentoService {
     private final EmbeddingService embeddingService;
 
     public Documento processarUpload(MultipartFile arquivo, Usuario usuario) throws IOException {
+        String nomeArquivo = arquivo.getOriginalFilename();
+
+        List<Documento> existentes = documentoRepository.findByUsuarioId(usuario.getId());
+
+        if (existentes.size() >= MAXIMO_DOCUMENTOS_POR_USUARIO) {
+            throw new IllegalArgumentException(
+                    "Limite de %d documentos por usuario atingido."
+                            .formatted(MAXIMO_DOCUMENTOS_POR_USUARIO));
+        }
+
+        boolean jaExiste = existentes.stream()
+                .anyMatch(d -> d.getNomeArquivo().equals(nomeArquivo));
+
+        if (jaExiste) {
+            throw new IllegalArgumentException(
+                    "Ja existe um documento com esse nome: " + nomeArquivo);
+        }
+
         String textoCompleto = extrairTexto(arquivo);
+
+        if (textoCompleto == null || textoCompleto.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Nao foi possivel extrair texto do arquivo. "
+                            + "PDFs formados apenas por imagens nao sao suportados.");
+        }
+
+        List<String> pedacos = dividirEmTrechos(textoCompleto);
+
+        if (pedacos.size() > MAXIMO_TRECHOS_POR_DOCUMENTO) {
+            throw new IllegalArgumentException(
+                    "Documento muito grande: %d trechos (maximo %d). Envie um arquivo menor."
+                            .formatted(pedacos.size(), MAXIMO_TRECHOS_POR_DOCUMENTO));
+        }
 
         Documento documento = new Documento();
         documento.setUsuario(usuario);
-        documento.setNomeArquivo(arquivo.getOriginalFilename());
+        documento.setNomeArquivo(nomeArquivo);
         documento.setTipo("pdf");
         documento = documentoRepository.save(documento);
-
-        List<String> pedacos = dividirEmTrechos(textoCompleto);
 
         int ordem = 0;
         for (String pedaco : pedacos) {
@@ -63,6 +93,8 @@ public class DocumentoService {
 
     private static final int TAMANHO_TRECHO = 1000;
     private static final int SOBREPOSICAO = 200;
+    private static final int MAXIMO_TRECHOS_POR_DOCUMENTO=150;
+    private static final int MAXIMO_DOCUMENTOS_POR_USUARIO = 10;
 
     private List<String> dividirEmTrechos(String texto) {
         List<String> trechos = new ArrayList<>();
